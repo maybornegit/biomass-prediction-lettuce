@@ -171,11 +171,13 @@ print("\nBegin test of training code\n")
   
 torch.manual_seed(1)
 np.random.seed(1)
-train_file = "./Biomass_results.txt"
+train_file = "./Biomass_results_20240711_e125_1.pt"
 
 bat_size = 128
 max_epochs = 500
 train_ldr = torch.utils.data.DataLoader(train_dataset,
+  batch_size=bat_size, shuffle=True)
+valid_ldr = torch.utils.data.DataLoader(valid_dataset,
   batch_size=bat_size, shuffle=True)
 device = torch.device("cpu")
 
@@ -191,7 +193,7 @@ milestones = np.arange(20,max_epochs,20)  # Drop learning rate by a factor of 0.
 gamma = 0.1  # Drop factor
 scheduler = torch.optim.lr_scheduler.MultiStepLR(optimizer, milestones=milestones, gamma=gamma)
 
-for epoch in range(0, 500):
+for epoch in range(0, 125):
     print(epoch)
     # T.manual_seed(1 + epoch)  # recovery reproduce
     epoch_loss = 0.0  # sum avg loss per item
@@ -215,6 +217,26 @@ for epoch in range(0, 500):
       # TODO: save checkpoint
 
 print("\nDone ")
+
+epoch_loss = 0.0  # sum avg loss per item
+      
+for (batch_idx, batch) in enumerate(tqdm.tqdm(valid_ldr)):
+    X = batch[0].float()  # predictors shape [10,8]
+    Y = batch[1].float()  # targets shape [10,1] 
+    
+    optimizer.zero_grad()
+    oupt = net(X)            # shape [10,1]
+    
+    loss_val = loss_func(oupt, Y)  # avg loss in batch
+    epoch_loss += loss_val.item()  # a sum of averages
+    loss_val.backward()
+    optimizer.step()
+    
+print(epoch_loss)
+
+torch.save(net, train_file)
+model = torch.load(train_file)
+model.eval()
 ## torch DataLoader
 ## CNN Functions
 ## Figure out the loss function
