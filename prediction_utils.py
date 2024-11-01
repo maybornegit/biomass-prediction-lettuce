@@ -1,8 +1,8 @@
 import torch, tqdm
 import numpy as np
 from datetime import datetime
-from keras.models import load_model
 from scipy.optimize import curve_fit
+from keras.models import load_model
 
 def pred_all(net_d_data,net_c_data, net_c, net_d):
     oupts_delta = []
@@ -10,6 +10,8 @@ def pred_all(net_d_data,net_c_data, net_c, net_d):
         X = (torch.from_numpy(np.transpose(net_d_data[i][0], (2, 0, 1))).float())
         # X = torch.from_numpy(net_d_data[i][0]).float()
         X = torch.reshape(X, (1, 8, 640, 640))
+        if torch.cuda.is_available():
+            X = X.to('cuda')
         oupt = net_d(X).detach().reshape((-1,))  # shape [10,1]
         oupts_delta.append((float(oupt), net_d_data[i][1]))
 
@@ -18,6 +20,8 @@ def pred_all(net_d_data,net_c_data, net_c, net_d):
         X = (torch.from_numpy(np.transpose(net_c_data[i][0], (2, 0, 1))).float())
         # X = torch.from_numpy(net_c_data[i][0]).float()
         X = torch.reshape(X, (1, 4, 640, 640))
+        if torch.cuda.is_available():
+            X = X.to('cuda')
         oupt = net_c(X).detach().reshape((-1,))  # shape [10,1]
         oupts_cnn.append((float(oupt), net_c_data[i][1]))
 

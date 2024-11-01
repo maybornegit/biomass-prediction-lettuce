@@ -196,14 +196,45 @@ def test_data_third_auton(coreDir, trainDir, trueDir, depthDir):
             print(error)
     return rgbdTrue
 
-def test_data_my_data(coreDir, trainDir, trueDir, segmentation, artifZoom,banned,aug_factor, max_pics):
+def test_data_my_data(coreDir, trainDir, trueDir, suc_sheet, light_idx, segmentation, artifZoom,banned,aug_factor, max_pics):
+    def lighting(traj, trueData, light_idx):
+        lights = []
+        for pt in traj:
+            pos = trueData[trueData['Data ID'] == pt.replace('.npy', '')]['Position'].iloc[0]
+            light = light_idx[light_idx['Position Index'] == pos]['Lighting Value'].iloc[0]
+            lights.append(light)
+        return np.mean(np.array(lights))
+
     trainPaths = sorted([f for f in listdir(coreDir + trainDir)])
     trueData = pd.read_csv(coreDir + trueDir)
-    trainPathswTrue = [
-        (coreDir + trainDir + '/' + trainPaths[i],
-         float(trueData[trueData['Data ID'] == trainPaths[i].replace('.npy', '')]['Fresh Biomass'].iloc[0]),
-         float(trueData[trueData['Data ID'] == trainPaths[i].replace('.npy', '')]['Distance (in mm)'].iloc[0]))
-        for i in range(len(trainPaths))]
+    lightData = pd.read_csv(light_idx)
+    _,trajs = get_traj(suc_sheet, trueData)
+
+    trainPathswTrue = []
+    for i, path in enumerate(trainPaths):
+        real_path = path.replace('.npy', '')
+        for j, traj in enumerate(trajs):
+            # print(real_path, traj)
+            if real_path in traj:
+                idx = traj.index(real_path)
+                traj_part = traj[:idx]
+                break
+        try:
+            eff_light = lighting(traj_part, trueData, lightData)
+            trainPathswTrue.append((coreDir + trainDir + '/' + trainPaths[i],
+                                    float(trueData[trueData['Data ID'] == trainPaths[i].replace('.npy', '')][
+                                              'Fresh Biomass'].iloc[0]),
+                                    float(trueData[trueData['Data ID'] == trainPaths[i].replace('.npy', '')][
+                                              'Distance (in mm)'].iloc[0]),
+                                    eff_light))
+        except:
+            pass
+
+    # trainPathswTrue = [
+    #     (coreDir + trainDir + '/' + trainPaths[i],
+    #      float(trueData[trueData['Data ID'] == trainPaths[i].replace('.npy', '')]['Fresh Biomass'].iloc[0]),
+    #      float(trueData[trueData['Data ID'] == trainPaths[i].replace('.npy', '')]['Distance (in mm)'].iloc[0]))
+    #     for i in range(len(trainPaths))]
 
     if not artifZoom:
         trainPaths_filt = []
@@ -215,8 +246,14 @@ def test_data_my_data(coreDir, trainDir, trueDir, segmentation, artifZoom,banned
     # print([trainPathswTrue[i][2] for i in range(len(trainPathswTrue))])
     random.shuffle(trainPathswTrue)
 
+    new = []
+    for train in trainPathswTrue:
+        if int(train[1]) < 30:
+            new.append(train)
+    trainPathswTrue = new[:]
+
     rgbdTrue = []
-    for i in tqdm.tqdm(range(max_pics//aug_factor)):
+    for i in tqdm.tqdm(range(max_pics//int(0.8*aug_factor+0.2))):
         try:
             rgbd = np.load(trainPathswTrue[i][0])
             target_size = (640, 640)
@@ -259,7 +296,7 @@ def test_data_my_data(coreDir, trainDir, trueDir, segmentation, artifZoom,banned
                 rgbd = np.concatenate(
                     (cv2.cvtColor(zoomed_rgb, cv2.COLOR_RGB2BGR), zoomed_depth.reshape((640, 640, 1))), axis=2)
 
-            rgbdTrue.append((rgbd, trainPathswTrue[i][1]))
+            rgbdTrue.append((rgbd, trainPathswTrue[i][1], trainPathswTrue[i][3]))
         except Exception as error:
             print(error)
     return rgbdTrue

@@ -15,7 +15,7 @@ from PIL import Image, ImageEnhance
 import numpy as np
 import matplotlib.pyplot as plt
 from datetime import datetime
-from biomass_cnn_models import CNN_128, CNN_640, CNN_Delta, MAPE
+from biomass_cnn_models import CNN_128, CNN_640, CNN_Delta, ResNet640, MAPE
 from augment_utils import data_augmentations, LettuceDataset
 import data_utils
 
@@ -74,9 +74,9 @@ else:
     aug_flip = True
 if '--augrot' in args:
     idx = args.index('--augrot')
-    aug_rot = args[idx + 1] == 'True' or args[idx+1] == '1'
+    aug_rot = int(args[idx+1])
 else:
-    aug_rot = True
+    aug_rot = 3
 if '--augbright' in args:
     idx = args.index('--augbright')
     aug_bright = int(args[idx+1])
@@ -92,14 +92,29 @@ if '-m' in args:
     max_pics = int(args[idx+1])
 else:
     if test_type == 'my_data_delta':
-        max_pics = 800
+        max_pics = 2200
     else:
-        max_pics = 2500
+        max_pics = 4500
 if '--loss' in args:
     idx = args.index('--loss')
     loss = str(args[idx+1])
 else:
     loss = 'MAPE'
+if '--model' in args:
+    idx = args.index('--model')
+    model = str(args[idx+1])
+else:
+    model = 'base'
+if '--augcrop' in args:
+    idx = args.index('--augcrop')
+    aug_crop = int(args[idx+1])
+else:
+    aug_crop = 3
+if '--auggrey' in args:
+    idx = args.index('--auggrey')
+    aug_grey = args[idx + 1] == 'True' or args[idx+1] == '1'
+else:
+    aug_grey = True
 
 presets = ['Name: ', TRIAL_NAME,' (--name)',
            'Epochs: ', max_epochs,' (-e)',
@@ -112,9 +127,12 @@ presets = ['Name: ', TRIAL_NAME,' (--name)',
            'Flip Augment: ',aug_flip,' (--augflip)',
            'Rotate Augment: ',aug_rot,' (--augrot)',
            'Brightness Augment: ',aug_bright,' (--augbright)',
+           'Crop Augment: ',aug_crop,' (--augcrop)',
+           'Grey Augment: ',aug_grey,' (--auggrey)',
            'Delta Jump: ',delta_jump,' (--deltajump)',
            'Max Pictures: ',max_pics,' (-m)',
-           'Loss: ',loss,' (--loss)'
+           'Loss: ',loss,' (--loss)',
+           'Model: ',model,' (--model)'
            ]
 
 for i in range(len(presets) // 3):
@@ -143,7 +161,7 @@ else:
 
 print('\n-----Dataset Loading-----\n')
 ###
-aug_factor = (aug_bright+1)*(3*aug_rot+2*aug_flip)+1
+aug_factor = (aug_rot+3*aug_flip+3)*aug_bright+1
 if test_type == 'xu_data':
     ### Important Database Directories
     coreDir = "../Field measurements and code/"
@@ -169,10 +187,17 @@ elif test_type == 'my_data_standard':
     coreDir = "../CustomI2GROW_Dataset"
     trainDir = "/RGBDImages"
     trueDir = "/Biomass_Info_Ground_Truth.csv"
+    suc_sheet = coreDir+ '/successor_sheet.csv'
+    light_idx = coreDir + '/lighting.csv'
 
     ### Set-up for Image Locations + True Biomass
-    rgbdTrue = data_utils.test_data_my_data(coreDir, trainDir, trueDir, segmentation, artifZoom,banned_for_test,aug_factor, max_pics)
-    net = CNN_640().to(device)
+    rgbdTrue = data_utils.test_data_my_data(coreDir, trainDir, trueDir, suc_sheet, light_idx, segmentation, artifZoom,banned_for_test,aug_factor, max_pics)
+    if model == 'base':
+        net = CNN_640().to(device)
+    elif model == 'resnet':
+        net = ResNet640().to(device)
+    else:
+        raise NotImplementedError
 elif test_type == 'my_data_delta':
     coreDir = "../CustomI2GROW_Dataset"
     trainDir = "/RGBDImages/"
@@ -190,11 +215,12 @@ print('\n-----Dataset Loading Complete-----\n')
 print('\n-----Augmentation-----\n')
 
 # Create training and validation datasets with augmentations
-augmentSet_train, augmentSet_valid = data_augmentations(rgbdTrue, train_split, aug_flip,aug_rot, aug_bright)
+augmentSet_train, valid = data_augmentations(rgbdTrue, train_split, aug_flip,aug_rot, aug_bright, aug_crop, aug_grey)
+valid_set = [(rgbdTrue[idx][0], rgbdTrue[idx][1], rgbdTrue[idx][2]) for idx in valid] # Valid describes indexes used for valid
 print(len(augmentSet_train))
 
 train_dataset = LettuceDataset(augmentSet_train)
-valid_dataset = LettuceDataset(augmentSet_valid)
+valid_dataset = LettuceDataset(valid_set)
 
 print('\n-----Augmentation Complete-----\n')
 
@@ -222,7 +248,7 @@ else:
 optimizer = torch.optim.Adam(net.parameters(),lr=lrn_rate)
 
 ##### SCHEDULED DROPS (if nec.)
-milestones = np.arange(20,100,20)  # Drop learning rate by a factor of 0.75 at these milestones
+milestones = np.arange(30,max_epochs,30)  # Drop learning rate by a factor of 0.75 at these milestones
 gamma = 0.5  # Drop factor
 scheduler = torch.optim.lr_scheduler.MultiStepLR(optimizer, milestones=milestones, gamma=gamma)
 
@@ -237,7 +263,10 @@ for epoch in range(0, max_epochs):
     ##### TRAINING LOOP
     for (batch_idx, batch) in enumerate(tqdm.tqdm(train_ldr)):
         X, Y = batch[0].float(), batch[1].float()
-        sum_true += torch.sum(Y).detach()
+        if torch.cuda.is_available():
+            X = X.to('cuda')
+            Y = Y.to('cuda')
+        sum_true += float(torch.sum(Y).detach())
         optimizer.zero_grad()
         oupt = net(X).reshape((-1,))  # shape [10,1]
         len_batch = oupt.shape[0]
@@ -245,13 +274,13 @@ for epoch in range(0, max_epochs):
         loss_val.backward()
         optimizer.step()
 
-        epoch_loss += mse_calc(oupt, Y).detach() * len_batch  # a sum of averages
+        epoch_loss += float(mse_calc(oupt, Y).detach() * len_batch)  # a sum of averages
 
     ##### TRAINING EVALUATION
     mse = epoch_loss / len(train_dataset)
     mean_error = np.sqrt(mse)
     nrmse = mean_error / (sum_true / len(train_dataset))
-    train_loss.append(nrmse)
+    train_loss.append(nrmse.item())
 
     valid_loss_iter = 0.0  # sum avg loss per item
     sum_true = 0.0
@@ -260,19 +289,22 @@ for epoch in range(0, max_epochs):
     for (batch_idx, batch) in enumerate(tqdm.tqdm(valid_ldr)):
         X = batch[0].float()  # predictors shape [10,8]
         Y = batch[1].float()  # targets shape [10,1]
+
+        if torch.cuda.is_available():
+            X = X.to('cuda')
+            Y = Y.to('cuda')
         sum_true += torch.sum(Y)
         oupt = net(X).detach().reshape((-1,))  # shape [10,1]
         len_batch = oupt.shape[0]
-        loss_val = mse_calc(oupt, Y).detach() * len_batch  # avg loss in batch
-        valid_loss_iter += loss_val.item()  # a sum of averages
+        loss_val = float(mse_calc(oupt, Y).detach() * len_batch)  # avg loss in batch
+        valid_loss_iter += loss_val  # a sum of averages
 
     ##### VALIDATION EVALUATION
     mse = valid_loss_iter / len(valid_dataset)
     mean_error = np.sqrt(mse)
     nrmse = mean_error / (sum_true / len(valid_dataset))
-    valid_loss.append(nrmse)
-
-    print('\nCurrent Validation NRMSE Loss:' + str(valid_loss[-1]))
+    valid_loss.append(nrmse.item())
+    print('\nCurrent Validation NRMSE Loss: ' + str(round(valid_loss[-1],3)))
 
     ##### PLOT (if necessary every epoch)
     '''if epoch > 0:
@@ -306,6 +338,7 @@ valid_loss = np.array(valid_loss)
 print('Train Loss: ', train_loss[-1], 'Validation Loss: ', valid_loss[-1])
 losses.append([train_loss[-1], valid_loss[-1]])
 
+print(valid_dataset.get_lighting(3))
 valid_ldr = torch.utils.data.DataLoader(valid_dataset,
                                         batch_size=1, shuffle=False)
 
@@ -315,18 +348,21 @@ nrmse_loss = []
 for (batch_idx, batch) in enumerate(tqdm.tqdm(valid_ldr)):
     X = batch[0].float()  # predictors shape [10,8]
     Y = batch[1].float()  # targets shape [10,1]
+    if torch.cuda.is_available():
+        X = X.to('cuda')
+        Y = Y.to('cuda')
 
     oupt = net(X).detach().reshape((-1,))  # shape [10,1]
     for i in range(X.shape[0]):
-        actual_plot.append(Y[i])
+        actual_plot.append(float(Y[i].item()))
         # print(Y[i])
-        predicted_plot.append(oupt[i])
+        predicted_plot.append(float(oupt[i].item()))
 
     for i in range(Y.shape[0]):
-        loss_val = mse_calc(oupt[i], Y[i]).detach()
-        rmse = np.sqrt(loss_val.item())
-        nrmse = rmse / Y[i]
-        nrmse_loss.append((Y[i], nrmse))
+        loss_val = float(mse_calc(oupt[i], Y[i]).detach())
+        rmse = np.sqrt(loss_val)
+        nrmse = rmse / float(Y[i].item())
+        nrmse_loss.append((float(Y[i].item()), nrmse, valid_dataset.get_lighting(batch_idx)))
 
 nrmse_error_chart = []
 for i in range(len(nrmse_loss)):
@@ -337,6 +373,11 @@ for i in range(len(nrmse_loss)):
         nrmse_error_chart[idx].append(nrmse_loss[i][1])
     else:
         nrmse_error_chart.append(list(nrmse_loss[i]))
+
+light_error = [[],[]]
+for i in range(len(nrmse_loss)):
+    light_error[0].append(nrmse_loss[i][2])
+    light_error[1].append(nrmse_loss[i][1])
 
 nrmse_error_chart = [(nrmse_error_chart[i][0], sum(nrmse_error_chart[i][1:]) / len(nrmse_error_chart[i][1:])) for i in
                      range(len(nrmse_error_chart))]
@@ -371,6 +412,15 @@ if plot_results:
     plt.legend()
     plt.title('Error v. Weight')
     plt.xlabel('Actual Biomass')
+    plt.ylabel('NRMSE Error Metric')
+
+    ##### ERROR VARIANCE BY LIGHTING
+    plt.figure(4)
+    plt.scatter(light_error[0], light_error[1])
+    plt.legend()
+    plt.xlim([200,380])
+    plt.title('Error v. Lighting')
+    plt.xlabel('Lighting')
     plt.ylabel('NRMSE Error Metric')
 
 ##### FINAL METRICS (TRAIN LOSS, VALID LOSS)
