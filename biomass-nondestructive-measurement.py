@@ -46,7 +46,7 @@ if '-lr' in args:
     idx = args.index('-lr')
     lrn_rate = float(args[idx + 1])
 else:
-    lrn_rate = 3e-5
+    lrn_rate = 1e-4
 if '--seg' in args:
     idx = args.index('--seg')
     segmentation = args[idx + 1] == 'True' or args[idx+1] == '1'
@@ -66,7 +66,7 @@ if '-d' in args:
     idx = args.index('-d')
     test_type = str(args[idx + 1])
 else:
-    test_type = 'my_data_delta'
+    test_type = 'my_data_standard'
 if '--augflip' in args:
     idx = args.index('--augflip')
     aug_flip = args[idx + 1] == 'True' or args[idx+1] == '1'
@@ -115,6 +115,16 @@ if '--auggrey' in args:
     aug_grey = args[idx + 1] == 'True' or args[idx+1] == '1'
 else:
     aug_grey = True
+if '--drop' in args:
+    idx = args.index('--drop')
+    sch_drop = int(args[idx+1])
+else:
+    sch_drop = 30
+if '-g' in args:
+    idx = args.index('-g')
+    gamma_ = float(args[idx+1])
+else:
+    gamma_ = .5
 
 presets = ['Name: ', TRIAL_NAME,' (--name)',
            'Epochs: ', max_epochs,' (-e)',
@@ -130,6 +140,8 @@ presets = ['Name: ', TRIAL_NAME,' (--name)',
            'Crop Augment: ',aug_crop,' (--augcrop)',
            'Grey Augment: ',aug_grey,' (--auggrey)',
            'Delta Jump: ',delta_jump,' (--deltajump)',
+           'Scheduled Drop: ',sch_drop,' (--drop)',
+           'Gamma: ',gamma_,' (-g)',
            'Max Pictures: ',max_pics,' (-m)',
            'Loss: ',loss,' (--loss)',
            'Model: ',model,' (--model)'
@@ -248,8 +260,8 @@ else:
 optimizer = torch.optim.Adam(net.parameters(),lr=lrn_rate)
 
 ##### SCHEDULED DROPS (if nec.)
-milestones = np.arange(30,max_epochs,30)  # Drop learning rate by a factor of 0.75 at these milestones
-gamma = 0.5  # Drop factor
+milestones = np.arange(sch_drop,max_epochs,sch_drop)  # Drop learning rate by a factor of 0.75 at these milestones
+gamma = gamma_  # Drop factor
 scheduler = torch.optim.lr_scheduler.MultiStepLR(optimizer, milestones=milestones, gamma=gamma)
 
 train_loss = []
@@ -304,7 +316,7 @@ for epoch in range(0, max_epochs):
     mean_error = np.sqrt(mse)
     nrmse = mean_error / (sum_true / len(valid_dataset))
     valid_loss.append(nrmse.item())
-    print('\nCurrent Validation NRMSE Loss: ' + str(round(valid_loss[-1],3)))
+    print('\nCurrent Validation NRMSE Loss: ' + str(round(valid_loss[-1],3))+'\nCurrent Validation MSE Loss: ' + str(round(mse,3)))
 
     ##### PLOT (if necessary every epoch)
     '''if epoch > 0:

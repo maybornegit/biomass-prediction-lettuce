@@ -199,6 +199,8 @@ class ResNet640(nn.Module):
             self.fc3 = self.fc3.to('cuda')
             self.fc4 = self.fc4.to('cuda')
             self.device = torch.device("cuda:0")
+        else:
+            self.device = torch.device("cpu")
 
     def forward(self,x):
         preprocessRGB = transforms.Compose([

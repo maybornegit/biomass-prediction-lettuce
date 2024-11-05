@@ -82,11 +82,13 @@ def ground_truth_traj(seq,trueData):
         traj_array_g[1].append(
             float(trueData[trueData['Data ID'] == seq[j].replace('.npy', '')]['Fresh Biomass'].iloc[0]))
         if j == 0:
-            traj_array_g[0].append(2)
+            traj_array_g[0].append(10)
         else:
             diff = (datetime.strptime(seq[j][:10], "%Y-%m-%d") - datetime.strptime(seq[j - 1][:10],
                                                                                         "%Y-%m-%d")).days
             traj_array_g[0].append(traj_array_g[0][-1] + int(diff))
+        if (traj_array_g[0][-1] - 10) >= 14:
+            break
     return traj_array_g[0], traj_array_g[1]
 
 def pred_traj_lstm(pred_traj, model_paths, avg=True):

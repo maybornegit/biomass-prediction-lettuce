@@ -138,6 +138,14 @@ def filter_data(banned,segmentation=True):
             print(error)
     return rgbdTrue
 
+def lighting(traj, trueData, light_idx):
+    lights = []
+    for pt in traj:
+        pos = trueData[trueData['Data ID'] == pt.replace('.npy', '')]['Position'].iloc[0]
+        light = light_idx[light_idx['Position Index'] == pos]['Lighting Value'].iloc[0]
+        lights.append(light)
+    return np.mean(np.array(lights))
+
 plt.style.use('https://github.com/dhaitz/matplotlib-stylesheets/raw/master/pacoty.mplstyle')
 
 ### Relevant Paths
@@ -148,7 +156,9 @@ lstm_paths = ['/home/frc-ag-2/Downloads/old_cnn_results/lstm_20241010-deltawtest
 
 coreDir = os.path.expanduser("~/Downloads/CustomI2GROW_Dataset")
 trueDir = "/Biomass_Info_Ground_Truth.csv"
+lightDir = "/lighting.csv"
 trueData = pd.read_csv(coreDir + trueDir)
+lightidx = pd.read_csv(coreDir + lightDir)
 
 if torch.cuda.is_available():
     device = torch.device("cuda:0")
@@ -173,11 +183,19 @@ test_data_names = ['2024-09-10-0', '2024-09-11-0', '2024-09-12-0', '2024-09-13-0
               '2024-09-10-3','2024-09-11-3', '2024-09-12-3', '2024-09-13-3', '2024-09-16-3', '2024-09-17-3', '2024-09-18-3','2024-09-19-7', '2024-09-20-7',
               '2024-09-10-7', '2024-09-11-7', '2024-09-12-7', '2024-09-13-7','2024-09-16-7', '2024-09-17-7', '2024-09-18-7', '2024-09-19-11', '2024-09-20-11', '2023-09-24-4', '2024-09-25-3', '2024-09-26-3', '2024-09-27-3']
 ### Filtering Trajectories
-trajs_test = []
+# trajs_test = []
+# for i in range(len(trajs)):
+#     if trajs[i][0] in test_data_names:
+#         trajs_test.append(trajs[i])
+# trajs = trajs_test[:]
+
+trajs_filt = []
+light = []
 for i in range(len(trajs)):
-    if trajs[i][0] in test_data_names:
-        trajs_test.append(trajs[i])
-trajs = trajs_test[:]
+    if trueData[trueData['Data ID'] == trajs[i][0].replace('.npy', '')]['Fresh Biomass'].iloc[0] <= 3:
+        trajs_filt.append(trajs[i])
+        light.append(lighting(trajs[i],trueData,lightidx))
+trajs = trajs_filt[:]
 
 ### Filtering Raw Data
 test_data = []
@@ -186,24 +204,25 @@ for i in range(len(data)):
         test_data.append(data[i])
 data = test_data[:]
 
-### Filtering Bad Data
-banned = ['2024-09-17-14']
-net_c_data = filter_data(banned) ## Only single-height
-net_d_data = delta_stack(data,banned)
-
-### Raw Predictions
-oupts_delta, oupts_cnn = p_util.pred_all(net_d_data,net_c_data, net_c, net_d)
+# ### Filtering Bad Data
+# banned = ['2024-09-17-14']
+# net_c_data = filter_data(banned) ## Only single-height
+# net_d_data = delta_stack(data,banned)
+#
+# ### Raw Predictions
+# oupts_delta, oupts_cnn = p_util.pred_all(net_d_data,net_c_data, net_c, net_d)
 
 ### Predictions Mapped to Trajectories
 traj_pred = []
 for i in range(len(trajs)):
-    traj_array_d = list(p_util.pred_traj_delta(trajs[i], trueData, net_d_data, oupts_delta))
-    traj_array_c = list(p_util.pred_traj_cnn(trajs[i], net_c_data, oupts_cnn))
-    traj_array_lstm = list(p_util.pred_traj_lstm(traj_array_d[:], lstm_paths, avg=False))
+    # traj_array_d = list(p_util.pred_traj_delta(trajs[i], trueData, net_d_data, oupts_delta))
+    # traj_array_c = list(p_util.pred_traj_cnn(trajs[i], net_c_data, oupts_cnn))
+    # traj_array_lstm = list(p_util.pred_traj_lstm(traj_array_d[:], lstm_paths, avg=False))
     traj_array_g = list(p_util.ground_truth_traj(trajs[i],trueData))
-    print(np.array(traj_array_c[0]), np.array(traj_array_c[1]))
-    traj_pred_bayes = list(p_util.bayesian_regression(np.array(traj_array_c[0]), np.array(traj_array_c[1]), rmse))
-    traj_pred.append([i, traj_array_c,traj_array_d, traj_array_g, traj_array_lstm,traj_pred_bayes])
+    # print(np.array(traj_array_c[0]), np.array(traj_array_c[1]))
+    # traj_pred_bayes = list(p_util.bayesian_regression(np.array(traj_array_c[0]), np.array(traj_array_c[1]), rmse))
+    # traj_pred.append([i, traj_array_c,traj_array_d, traj_array_g, traj_array_lstm,traj_pred_bayes])
+    traj_pred.append([i, traj_array_g])
 
 # print([traj[1] for traj in traj_pred]) # CNN Prediction
 # print([traj[2] for traj in traj_pred]) # Delta Prediction
@@ -211,89 +230,139 @@ for i in range(len(trajs)):
 # print([traj[4] for traj in traj_pred]) # Ground Truth
 # print([len(traj[4][0]) for traj in traj_pred])
 
+norm = plt.Normalize(np.min(np.array(light)), np.max(np.array(light)))
+cm = plt.cm.rainbow
+sm = plt.cm.ScalarMappable(cmap=cm, norm=norm)
+
+
+### Plot Trajectories
+# for i in range(len(traj_pred)):
+#     plt.figure(i)
+#     map_traj = traj_pred[i]
+#     plt.plot(np.array(map_traj[1][0]),np.array(map_traj[1][1]), label="CNN Prediction")
+#     plt.plot(np.array(map_traj[2][0]),np.array(map_traj[2][1]), label="Delta Prediction")
+#     plt.plot(np.array(map_traj[3][0]), np.array(map_traj[3][1]), label="Ground Truth")
+#     plt.plot(np.array(map_traj[4][0]), np.array(map_traj[4][1]), label="Delta-LSTM Prediction")
+#     plt.plot(np.array(map_traj[5][0]),np.array(map_traj[5][1]), label="Base-Curve Fit Prediction")
+# plt.xlabel("Days")
+# plt.ylabel("Biomass")
+# plt.title("Trajectories")
+# plt.legend()
+
+norm = plt.Normalize(np.min(np.array(light)), np.max(np.array(light)))
+cm = plt.cm.rainbow
+sm = plt.cm.ScalarMappable(cmap=cm, norm=norm)
+
+plt.figure(0)
 ### Plot Trajectories
 for i in range(len(traj_pred)):
     map_traj = traj_pred[i]
-    plt.figure(i)
-    plt.plot(np.array(map_traj[1][0]),np.array(map_traj[1][1]), label="CNN Prediction")
-    # plt.plot(np.array(map_traj[2][0]),np.array(map_traj[2][1]), label="Delta Prediction")
-    plt.plot(np.array(map_traj[3][0]), np.array(map_traj[3][1]), label="Ground Truth")
-    # plt.plot(np.array(map_traj[4][0]), np.array(map_traj[4][1]), label="Delta-LSTM Prediction")
-    plt.plot(np.array(map_traj[5][0]),np.array(map_traj[5][1]), label="Base-Curve Fit Prediction")
-    plt.xlabel("Days")
-    plt.ylabel("Biomass")
-    plt.title("Trajectories")
-    plt.legend()
-
-traj_len = min([len(traj[4][0]) for traj in traj_pred])
-errors = []
-for i in range(len(trajs)):
-    errors.append([list(np.array(traj_pred[i][j][1])-np.array(traj_pred[i][3][1])) for j in [1,2,4,5]])
-
-stat_info = [[[],[],[],[]] for i in range(5)]
-for i in range(traj_len):
-    stat_info[0][0].append(np.mean([traj[1][1][i] for traj in traj_pred]))
-    stat_info[1][0].append(np.mean([traj[2][1][i] for traj in traj_pred]))
-    stat_info[2][0].append(np.mean([traj[3][1][i] for traj in traj_pred]))
-    stat_info[3][0].append(np.mean([traj[4][1][i] for traj in traj_pred]))
-    stat_info[4][0].append(np.mean([traj[5][1][i] for traj in traj_pred]))
-
-    stat_info[0][1].append(np.std([traj[1][1][i] for traj in traj_pred]))
-    stat_info[1][1].append(np.std([traj[2][1][i] for traj in traj_pred]))
-    stat_info[2][1].append(np.std([traj[3][1][i] for traj in traj_pred]))
-    stat_info[3][1].append(np.std([traj[4][1][i] for traj in traj_pred]))
-    stat_info[4][1].append(np.std([traj[5][1][i] for traj in traj_pred]))
-
-    stat_info[0][2].append(np.mean([error[0][i] for error in errors]))
-    stat_info[1][2].append(np.mean([error[1][i] for error in errors]))
-    stat_info[2][2].append(np.mean([0 for error in errors]))
-    stat_info[3][2].append(np.mean([error[2][i] for error in errors]))
-    stat_info[4][2].append(np.mean([error[3][i] for error in errors]))
-
-    stat_info[0][3].append(np.std([error[0][i] for error in errors]))
-    stat_info[1][3].append(np.std([error[1][i] for error in errors]))
-    stat_info[2][3].append(np.std([0 for error in errors]))
-    stat_info[3][3].append(np.std([error[2][i] for error in errors]))
-    stat_info[4][3].append(np.std([error[3][i] for error in errors]))
-
-plt.figure(len(traj_pred))
-names = ["Base CNN", "Delta CNN", "Ground Truth","Delta+LSTM CNN","Base CNN + Curve Fit "]
-for i in [2,0]:
-    alpha = 0.3 if i != 2 else 0.8
-    mean = stat_info[i][0]
-    ci = 1.96 * np.array(stat_info[i][1]) / np.sqrt(traj_len)
-    plt.plot(np.array(traj_pred[0][1][0]),np.array(mean), label=names[i])
-    plt.fill_between(np.array(traj_pred[0][1][0]), np.array(mean)-ci,np.array(mean)+ci, alpha=alpha)
+    plt.plot(np.array(map_traj[1][0]), np.array(map_traj[1][1]),  color=cm(norm(light[i])))
 plt.xlabel("Days")
 plt.ylabel("Biomass")
-plt.title("Mean Trajectories")
-plt.legend()
+plt.title("Trajectories")
+# plt.legend()
+plt.colorbar(sm)
+# plt.show()
 
-plt.figure(len(traj_pred)+1)
-for i in [2,4]:
-    alpha = 0.3 if i != 2 else 0.8
-    mean = stat_info[i][0]
-    ci = 1.96 * np.array(stat_info[i][1]) / np.sqrt(traj_len)
-    plt.plot(np.array(traj_pred[0][1][0]),np.array(mean), label=names[i])
-    plt.fill_between(np.array(traj_pred[0][1][0]), np.array(mean)-ci,np.array(mean)+ci, alpha=alpha)
+min_ = 10
+max_ = 24
+traj_len = max_-min_+1
+mean_array = []
+std_array = []
+days = []
+
+for i in range(min_,max_+1):
+    tmp = []
+    for traj in traj_pred:
+        for j, day in enumerate(traj[1][0]):
+            if day == i:
+                tmp.append(traj[1][1][j])
+    if len(tmp) > 10:
+        mean_array.append(np.mean(tmp))
+        std_array.append(np.std(tmp))
+        days.append(i)
+
+plt.figure(1)
+mean = np.array(mean_array)
+ci = 1.96 * np.array(std_array) / np.sqrt(len(days))
+plt.plot(np.array(days),np.array(mean_array))
+plt.fill_between(np.array(days), np.array(mean_array)-ci,np.array(mean_array)+ci, alpha=.7)
 plt.xlabel("Days")
 plt.ylabel("Biomass")
-plt.title("Mean Trajectories")
-plt.legend()
-
-
-plt.figure(len(traj_pred)+2)
-# for i in range(len(stat_info)):
-for i in [0,4,2]:
-    error = stat_info[i][2]
-    if i != 2:
-        ci = 1.96 * np.array(stat_info[i][3]) / np.sqrt(traj_len)
-        plt.plot(np.array(traj_pred[0][1][0]),np.array(error), label=names[i])
-        plt.fill_between(np.array(traj_pred[0][1][0]), np.array(error) - ci, np.array(error) + ci, alpha=0.3)
-    else:
-        plt.plot(np.array(traj_pred[0][1][0]), np.array(error), label=names[i])
-plt.xlabel("Days")
-plt.ylabel("Biomass")
-plt.title("Error")
-plt.legend()
+plt.title("Mean Ground Truth")
 plt.show()
+# plt.legend()
+
+# traj_len = min([len(traj[4][0]) for traj in traj_pred])
+# errors = []
+# for i in range(len(trajs)):
+#     errors.append([list(np.array(traj_pred[i][j][1])-np.array(traj_pred[i][3][1])) for j in [1,2,4,5]])
+#
+# stat_info = [[[],[],[],[]] for i in range(5)]
+# for i in range(traj_len):
+#     stat_info[0][0].append(np.mean([traj[1][1][i] for traj in traj_pred]))
+#     stat_info[1][0].append(np.mean([traj[2][1][i] for traj in traj_pred]))
+#     stat_info[2][0].append(np.mean([traj[3][1][i] for traj in traj_pred]))
+#     stat_info[3][0].append(np.mean([traj[4][1][i] for traj in traj_pred]))
+#     stat_info[4][0].append(np.mean([traj[5][1][i] for traj in traj_pred]))
+#
+#     stat_info[0][1].append(np.std([traj[1][1][i] for traj in traj_pred]))
+#     stat_info[1][1].append(np.std([traj[2][1][i] for traj in traj_pred]))
+#     stat_info[2][1].append(np.std([traj[3][1][i] for traj in traj_pred]))
+#     stat_info[3][1].append(np.std([traj[4][1][i] for traj in traj_pred]))
+#     stat_info[4][1].append(np.std([traj[5][1][i] for traj in traj_pred]))
+#
+#     stat_info[0][2].append(np.mean([error[0][i] for error in errors]))
+#     stat_info[1][2].append(np.mean([error[1][i] for error in errors]))
+#     stat_info[2][2].append(np.mean([0 for error in errors]))
+#     stat_info[3][2].append(np.mean([error[2][i] for error in errors]))
+#     stat_info[4][2].append(np.mean([error[3][i] for error in errors]))
+#
+#     stat_info[0][3].append(np.std([error[0][i] for error in errors]))
+#     stat_info[1][3].append(np.std([error[1][i] for error in errors]))
+#     stat_info[2][3].append(np.std([0 for error in errors]))
+#     stat_info[3][3].append(np.std([error[2][i] for error in errors]))
+#     stat_info[4][3].append(np.std([error[3][i] for error in errors]))
+#
+# plt.figure(len(traj_pred))
+# names = ["Base CNN", "Delta CNN", "Ground Truth","Delta+LSTM CNN","Base CNN + Curve Fit "]
+# for i in [2,0]:
+#     alpha = 0.3 if i != 2 else 0.8
+#     mean = stat_info[i][0]
+#     ci = 1.96 * np.array(stat_info[i][1]) / np.sqrt(traj_len)
+#     plt.plot(np.array(traj_pred[0][1][0]),np.array(mean), label=names[i])
+#     plt.fill_between(np.array(traj_pred[0][1][0]), np.array(mean)-ci,np.array(mean)+ci, alpha=alpha)
+# plt.xlabel("Days")
+# plt.ylabel("Biomass")
+# plt.title("Mean Trajectories")
+# plt.legend()
+#
+# plt.figure(len(traj_pred)+1)
+# for i in [2,4]:
+#     alpha = 0.3 if i != 2 else 0.8
+#     mean = stat_info[i][0]
+#     ci = 1.96 * np.array(stat_info[i][1]) / np.sqrt(traj_len)
+#     plt.plot(np.array(traj_pred[0][1][0]),np.array(mean), label=names[i])
+#     plt.fill_between(np.array(traj_pred[0][1][0]), np.array(mean)-ci,np.array(mean)+ci, alpha=alpha)
+# plt.xlabel("Days")
+# plt.ylabel("Biomass")
+# plt.title("Mean Trajectories")
+# plt.legend()
+#
+#
+# plt.figure(len(traj_pred)+2)
+# # for i in range(len(stat_info)):
+# for i in [0,4,2]:
+#     error = stat_info[i][2]
+#     if i != 2:
+#         ci = 1.96 * np.array(stat_info[i][3]) / np.sqrt(traj_len)
+#         plt.plot(np.array(traj_pred[0][1][0]),np.array(error), label=names[i])
+#         plt.fill_between(np.array(traj_pred[0][1][0]), np.array(error) - ci, np.array(error) + ci, alpha=0.3)
+#     else:
+#         plt.plot(np.array(traj_pred[0][1][0]), np.array(error), label=names[i])
+# plt.xlabel("Days")
+# plt.ylabel("Biomass")
+# plt.title("Error")
+# plt.legend()
+# plt.show()
